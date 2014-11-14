@@ -12,22 +12,26 @@ namespace ModernHttpClient
     public class ProgressStreamContent : StreamContent
     {
         public ProgressStreamContent(Stream stream, CancellationToken token)
-            : this(new ProgressStream(stream, token))
+            : this(new ProgressStream(stream, token, null), null)
+        {
+        }
+        public ProgressStreamContent(Stream stream, CancellationToken token, Action<Exception> exceptionMapper)
+            : this(new ProgressStream(stream, token, exceptionMapper), null)
         {
         }
 
         public ProgressStreamContent(Stream stream, int bufferSize)
-            : this(new ProgressStream(stream, CancellationToken.None), bufferSize)
+            : this(new ProgressStream(stream, CancellationToken.None, null), bufferSize, null)
         {
         }
 
-        ProgressStreamContent(ProgressStream stream)
+        ProgressStreamContent(ProgressStream stream, Action<Exception> exceptionMapper)
             : base(stream)
         {
             init(stream);
         }
 
-        ProgressStreamContent(ProgressStream stream, int bufferSize)
+        ProgressStreamContent(ProgressStream stream, int bufferSize, Action<Exception> exceptionMapper)
             : base(stream, bufferSize)
         {
             init(stream);
@@ -90,9 +94,11 @@ namespace ModernHttpClient
         class ProgressStream : Stream
         {
             CancellationToken token;
+            Action<Exception> exceptionMapper;
 
-            public ProgressStream(Stream stream, CancellationToken token)
+            public ProgressStream(Stream stream, CancellationToken token, Action<Exception> exceptionMapper)
             {
+                this.exceptionMapper = exceptionMapper;
                 ParentStream = stream;
 
                 ReadCallback = delegate { };
@@ -133,28 +139,53 @@ namespace ModernHttpClient
             public override int Read(byte[] buffer, int offset, int count)
             {
                 token.ThrowIfCancellationRequested();
-
-                var readCount = ParentStream.Read(buffer, offset, count);
-                ReadCallback(readCount);
-                return readCount;
+                try {
+                    var readCount = ParentStream.Read(buffer, offset, count);
+                    ReadCallback(readCount);
+                    return readCount;
+                } catch(Exception e) {
+                    if(exceptionMapper != null)
+                        exceptionMapper(e);
+                    throw e;
+                }
             }
 
             public override long Seek(long offset, SeekOrigin origin)
             {
                 token.ThrowIfCancellationRequested();
-                return ParentStream.Seek(offset, origin);
+                try {
+                    return ParentStream.Seek(offset, origin);
+                } catch(Exception e) {
+                    if(exceptionMapper != null)
+                        exceptionMapper(e);
+                    throw e;
+                }
+
             }
 
             public override void SetLength(long value)
             {
                 token.ThrowIfCancellationRequested();
-                ParentStream.SetLength(value);
+                try {
+                    ParentStream.SetLength(value);
+                } catch(Exception e) {
+                    if(exceptionMapper != null)
+                        exceptionMapper(e);
+                    throw e;
+                }
+
             }
 
             public override void Write(byte[] buffer, int offset, int count)
             {
                 token.ThrowIfCancellationRequested();
-                ParentStream.Write(buffer, offset, count);
+                try {
+                    ParentStream.Write(buffer, offset, count);
+                } catch(Exception e) {
+                    if(exceptionMapper != null)
+                        exceptionMapper(e);
+                    throw e;
+                }
                 WriteCallback(count);
             }
 
@@ -163,7 +194,14 @@ namespace ModernHttpClient
                 token.ThrowIfCancellationRequested();
                 var linked = CancellationTokenSource.CreateLinkedTokenSource(token, cancellationToken);
 
-                var readCount = await ParentStream.ReadAsync(buffer, offset, count, linked.Token);
+                int readCount;
+                try {
+                    readCount = await ParentStream.ReadAsync(buffer, offset, count, linked.Token);
+                } catch(Exception e) {
+                    if(exceptionMapper != null)
+                        exceptionMapper(e);
+                    throw e;
+                }
 
                 ReadCallback(readCount);
                 return readCount;
@@ -174,7 +212,14 @@ namespace ModernHttpClient
                 token.ThrowIfCancellationRequested();
 
                 var linked = CancellationTokenSource.CreateLinkedTokenSource(token, cancellationToken);
-                var task = ParentStream.WriteAsync(buffer, offset, count, linked.Token);
+                var task = default(Task);
+                try {
+                    task = ParentStream.WriteAsync(buffer, offset, count, linked.Token);
+                } catch(Exception e) {
+                    if(exceptionMapper != null)
+                        exceptionMapper(e);
+                    throw e;
+                }
 
                 WriteCallback(count);
                 return task;

@@ -15,7 +15,7 @@ using Android.OS;
 
 namespace ModernHttpClient
 {
-    public class NativeMessageHandler : HttpClientHandler
+    public class OkHttpNetworkHandler : HttpClientHandler
     {
         readonly OkHttpClient client = new OkHttpClient();
         readonly bool throwOnCaptiveNetwork;
@@ -23,9 +23,26 @@ namespace ModernHttpClient
         readonly Dictionary<HttpRequestMessage, WeakReference> registeredProgressCallbacks =
             new Dictionary<HttpRequestMessage, WeakReference>();
 
-        public NativeMessageHandler() : this(false, false) {}
+        public void CloseConnections() {
+            ConnectionPool.Default.EvictAll();
+        }
 
-        public NativeMessageHandler(bool throwOnCaptiveNetwork, bool customSSLVerification)
+        private void JavaExceptionMapper(Exception e)
+        {
+            if (e is Java.Net.UnknownHostException)
+                throw new WebException("Name resolution failure", e, WebExceptionStatus.NameResolutionFailure, null);
+            if (e is Java.IO.IOException) {
+                var msg = e.ToString();
+                if(msg.Contains("Hostname") && msg.Contains("was not verified"))
+                    CloseConnections();
+                throw new WebException("IO Exception", e, WebExceptionStatus.ConnectFailure, null);
+            }
+        }
+
+
+        public OkHttpNetworkHandler() : this(false, false) {}
+
+        public OkHttpNetworkHandler(bool throwOnCaptiveNetwork, bool customSSLVerification)
         {
             this.throwOnCaptiveNetwork = throwOnCaptiveNetwork;
 
@@ -59,8 +76,16 @@ namespace ModernHttpClient
                 return callback;
             }
         }
-
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            try {
+                return await InternalSendAsync(request, cancellationToken);
+            } catch(Exception e) {
+                JavaExceptionMapper(e);
+                throw e;
+            }
+        }
+        protected async Task<HttpResponseMessage> InternalSendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var java_uri = request.RequestUri.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped);
             var url = new Java.Net.URL(java_uri);
@@ -117,7 +142,7 @@ namespace ModernHttpClient
             var ret = new HttpResponseMessage((HttpStatusCode)resp.Code());
             ret.ReasonPhrase = resp.Message();
             if (respBody != null) {
-                var content = new ProgressStreamContent(respBody.ByteStream(), cancellationToken);
+                var content = new ProgressStreamContent(respBody.ByteStream(), cancellationToken, JavaExceptionMapper);
                 content.Progress = getAndRemoveCallbackFromRegister(request);
                 ret.Content = content;
             } else {

@@ -12,6 +12,7 @@ namespace ModernHttpClient
     {
         readonly CancellationTokenSource cts = new CancellationTokenSource();
         readonly Action onDispose;
+        readonly Action<Exception> exceptionMapper;
 
         long position;
         bool closeStreams;
@@ -23,18 +24,19 @@ namespace ModernHttpClient
         Stream current;
         Stream Current {
             get {
-                if (current != null) return current;
-                if (iterator == null) throw new ObjectDisposedException(GetType().Name);
+                lock(this) {
+                    if (current != null) return current;
+                    if (iterator == null) throw new ObjectDisposedException(GetType().Name);
 
-                if (iterator.MoveNext()) {
-                    current = iterator.Current;
+                    if (iterator.MoveNext()) {
+                        current = iterator.Current;
+                    }
                 }
-
                 return current;
             }
         }
 
-        public ConcatenatingStream(IEnumerable<Func<Stream>> source, bool closeStreams, Task blockUntil = null, Action onDispose = null)
+        public ConcatenatingStream(IEnumerable<Func<Stream>> source, bool closeStreams, Action<Exception> exceptionMapper, Task blockUntil = null, Action onDispose = null)
         {
             if (source == null) throw new ArgumentNullException("source");
 
@@ -43,6 +45,7 @@ namespace ModernHttpClient
             this.closeStreams = closeStreams;
             this.blockUntil = blockUntil;
             this.onDispose = onDispose;
+            this.exceptionMapper = exceptionMapper;
         }
 
         public override bool CanRead { get { return true; } }
@@ -64,7 +67,16 @@ namespace ModernHttpClient
             set { if (value != this.position) throw new NotSupportedException(); }
         }
 
-        public override async Task<int> ReadAsync (byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        public override async Task<int> ReadAsync (byte[] buffer, int offset, int count, CancellationToken cancellationToken) {
+            try {
+                return await InternalReadAsync(buffer, offset, count, cancellationToken);
+            } catch(Exception e) {
+                if(exceptionMapper != null)
+                    exceptionMapper(e);
+                throw e;
+            }
+        }
+        public async Task<int> InternalReadAsync (byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
             int result = 0;
 
@@ -84,19 +96,18 @@ namespace ModernHttpClient
                 Stream stream = Current;
                 if (stream == null) break;
 
-                var thisCount = default(int);
-                thisCount = await stream.ReadAsync(buffer, offset, count, cancellationToken);
+                var thisCount = await stream.ReadAsync(buffer, offset, count);
 
                 result += thisCount;
                 count -= thisCount;
                 offset += thisCount;
                 if (thisCount == 0) EndOfStream();
             }
-                            
+
             if (cancellationToken.IsCancellationRequested) {
                 throw new OperationCanceledException();
             }
-                            
+
             if (cts.IsCancellationRequested) {
                 throw new OperationCanceledException();
             }
@@ -107,7 +118,13 @@ namespace ModernHttpClient
 
         public override int Read (byte[] buffer, int offset, int count)
         {
-            return readInternal(buffer, offset, count);
+            try {
+                return readInternal(buffer, offset, count);
+            } catch (Exception e) {
+                if(exceptionMapper != null)
+                    exceptionMapper(e);
+                throw e;
+            }
         }
 
         int readInternal(byte[] buffer, int offset, int count, CancellationToken ct = default(CancellationToken))
@@ -130,8 +147,7 @@ namespace ModernHttpClient
                 Stream stream = Current;
                 if (stream == null) break;
 
-                var thisCount = default(int);
-                thisCount = stream.Read(buffer, offset, count);
+                var thisCount = stream.Read(buffer, offset, count);
 
                 result += thisCount;
                 count -= thisCount;
@@ -152,13 +168,15 @@ namespace ModernHttpClient
             if (disposing) {
                 cts.Cancel();
 
-                while (Current != null) {
-                    EndOfStream();
-                }
+                lock(this) {
+                    while (Current != null) {
+                        EndOfStream();
+                    }
 
-                iterator.Dispose();
-                iterator = null;
-                current = null;
+                    iterator.Dispose();
+                    iterator = null;
+                    current = null;
+                }
 
                 if (onDispose != null) onDispose();
             }
@@ -168,12 +186,15 @@ namespace ModernHttpClient
 
         void EndOfStream() 
         {
-            if (closeStreams && current != null) {
-                current.Close();
-                current.Dispose();
-            }
+            lock(this)
+            {
+                if (closeStreams && current != null) {
+                    current.Close();
+                    current.Dispose();
+                }
 
-            current = null;
+                current = null;
+            }
         }
     }
 }
