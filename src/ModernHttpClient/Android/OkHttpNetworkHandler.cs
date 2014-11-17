@@ -119,7 +119,7 @@ namespace ModernHttpClient
 
             var resp = default(Response);
             try {
-                resp = await call.EnqueueAsync().ConfigureAwait(false);
+                resp = await Task.Run(() => call.Execute());
                 var newReq = resp.Request();
                 var newUri = newReq == null ? null : newReq.Uri();
                 if (throwOnCaptiveNetwork && newUri != null) {
@@ -157,38 +157,6 @@ namespace ModernHttpClient
             }
 
             return ret;
-        }
-    }
-
-    public static class AwaitableOkHttp
-    {
-        public static Task<Response> EnqueueAsync(this Call This)
-        {
-            var cb = new OkTaskCallback();
-            This.Enqueue(cb);
-
-            return cb.Task;
-        }
-
-        class OkTaskCallback : Java.Lang.Object, ICallback
-        {
-            readonly TaskCompletionSource<Response> tcs = new TaskCompletionSource<Response>();
-            public Task<Response> Task { get { return tcs.Task; } }
-
-            public void OnFailure(Request p0, Java.IO.IOException p1)
-            {
-                // Kind of a hack, but the simplest way to find out that server cert. validation failed
-                if (p1.Message == String.Format("Hostname '{0}' was not verified", p0.Url().Host)) {
-                    tcs.TrySetException(new WebException(p1.LocalizedMessage, WebExceptionStatus.TrustFailure));
-                } else {
-                    tcs.TrySetException(p1);
-                }
-            }
-
-            public void OnResponse(Response p0)
-            {
-                tcs.TrySetResult(p0);
-            }
         }
     }
 
