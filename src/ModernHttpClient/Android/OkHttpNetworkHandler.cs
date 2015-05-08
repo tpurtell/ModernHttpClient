@@ -17,7 +17,7 @@ namespace ModernHttpClient
 {
     public class OkHttpNetworkHandler : HttpClientHandler
     {
-        readonly OkHttpClient client = new OkHttpClient();
+        public readonly OkHttpClient client = new OkHttpClient();
         readonly bool throwOnCaptiveNetwork;
 
         readonly Dictionary<HttpRequestMessage, WeakReference> registeredProgressCallbacks =
