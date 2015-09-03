@@ -143,7 +143,7 @@ namespace ModernHttpClient
             ret.RequestMessage = request;
             ret.ReasonPhrase = resp.Message();
             if (respBody != null) {
-                var content = new ProgressStreamContent(respBody.ByteStream(), cancellationToken, JavaExceptionMapper);
+                var content = new ProgressStreamContent(respBody.ByteStream(), CancellationToken.None, JavaExceptionMapper);
                 content.Progress = getAndRemoveCallbackFromRegister(request);
                 ret.Content = content;
             } else {
