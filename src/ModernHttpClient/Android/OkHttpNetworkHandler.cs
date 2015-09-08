@@ -133,7 +133,8 @@ namespace ModernHttpClient
                     }
                 }
             } catch (IOException ex) {
-                if (ex.Message.ToLowerInvariant().Contains("canceled")) {
+                //wtf, yes this can be null!
+                if (ex.Message != null && ex.Message.ToLowerInvariant().Contains("canceled")) {
                     throw new OperationCanceledException();
                 }
 
